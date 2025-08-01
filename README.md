@@ -1,4 +1,4 @@
-# Manifest builder
+# Manifest builder for Talon folder(s)
 
 Manifest builder generates a `manifest.json` file for your specified folder(s) by discovering talons actions, modes, tags, lists, and other talon entities that the folder(s) contributes and depends on, using AST parsing.
 
