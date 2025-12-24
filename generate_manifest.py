@@ -25,7 +25,16 @@ Manifest fields:
 - depends: Entities this package relies on (auto-generated)
 """
 
-GENERATOR_VERSION = "1.0.0"
+def get_generator_version() -> str:
+    """Get the version of manifest_builder from its own manifest.json"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    manifest_path = os.path.join(script_dir, 'manifest.json')
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+            return manifest.get('version', '1.0.0')
+    except:
+        return '1.0.0'  # Fallback if manifest doesn't exist yet
 
 # Require Python 3.12+
 if sys.version_info < (3, 12):
@@ -304,6 +313,51 @@ def resolve_package_dependencies(depends: Entities, entity_to_package: dict) -> 
 
     return dict(sorted(package_deps.items()))
 
+def infer_namespace_from_entities(contributes: Entities) -> str | None:
+    """
+    Infer namespace from contributed entities.
+    Finds the longest common prefix among all user.* entities.
+    Returns None if no user.* entities exist.
+    """
+    user_entities = []
+
+    # Collect all user.* entity suffixes
+    for entity_type in ENTITIES:
+        entities = getattr(contributes, entity_type)
+        for entity in entities:
+            if entity.startswith('user.'):
+                # Extract part after 'user.'
+                suffix = entity[5:]
+                user_entities.append(suffix)
+
+    if not user_entities:
+        return None
+
+    if len(user_entities) == 1:
+        # Single entity - use everything before last underscore, or whole thing
+        entity = user_entities[0]
+        if '_' in entity:
+            return entity.rsplit('_', 1)[0]
+        return entity
+
+    # Find longest common prefix
+    prefix = user_entities[0]
+    for entity in user_entities[1:]:
+        # Find common prefix between current prefix and entity
+        i = 0
+        while i < len(prefix) and i < len(entity) and prefix[i] == entity[i]:
+            i += 1
+        prefix = prefix[:i]
+
+        if not prefix:
+            break
+
+    # Clean up: remove trailing underscore if present
+    if prefix.endswith('_'):
+        prefix = prefix[:-1]
+
+    return prefix if prefix else None
+
 def infer_namespace_from_package_name(package_name: str) -> str:
     """
     Infer namespace from package name.
@@ -315,16 +369,19 @@ def infer_namespace_from_package_name(package_name: str) -> str:
     namespace = ''.join(c for c in namespace if c.isalnum() or c == '_')
     return namespace.lower()
 
-def validate_namespace(package_name: str, contributes: Entities) -> None:
+def validate_namespace(namespace: str, contributes: Entities) -> None:
+    """
+    Validate that contributed entities match the package namespace.
+
+    Warns if entities don't follow the user.<namespace>_* convention.
+    """
+def validate_namespace(namespace: str, contributes: Entities) -> None:
     """
     Validate that contributed entities match the package namespace.
     Warns if entities don't follow the user.<namespace>_* convention.
     """
-    namespace = infer_namespace_from_package_name(package_name)
-    expected_prefix = f"user.{namespace}_"
-    
     warnings = []
-    
+
     for entity_type in ENTITIES:
         entities = getattr(contributes, entity_type)
         for entity in entities:
@@ -332,12 +389,14 @@ def validate_namespace(package_name: str, contributes: Entities) -> None:
             if entity.startswith('user.'):
                 # Extract the part after 'user.'
                 entity_suffix = entity[5:]  # Remove 'user.'
-                # Check if it starts with namespace_
-                if not entity_suffix.startswith(f"{namespace}_"):
-                    warnings.append(f"  ⚠ {entity_type}: {entity} (expected to start with {expected_prefix})")
-    
+                # Allow exact match or prefix with underscore
+                # Valid: user.mouse_rig or user.mouse_rig_something
+                # Invalid: user.other_thing
+                if entity_suffix != namespace and not entity_suffix.startswith(f"{namespace}_"):
+                    warnings.append(f"  ⚠ {entity_type}: {entity} (expected 'user.{namespace}' or 'user.{namespace}_*')")
+
     if warnings:
-        print(f"\n⚠ Namespace warnings for package '{package_name}' (namespace: {namespace}):")
+        print(f"\n⚠ Namespace warnings (expected namespace: {namespace}):")
         for warning in warnings:
             print(warning)
         print()
@@ -423,20 +482,33 @@ def create_or_update_manifest() -> None:
                 setattr(new_entity_data.depends, key, depends_filtered)
 
             package_name = os.path.basename(full_package_dir)
-            namespace = infer_namespace_from_package_name(package_name)
+
+            # Use existing namespace if present, otherwise infer from contributed entities
+            namespace = existing_manifest_data.get("namespace")
+            if not namespace:
+                namespace = infer_namespace_from_entities(new_entity_data.contributes)
+            if not namespace:
+                # Fall back to package name if can't infer from entities
+                namespace = infer_namespace_from_package_name(package_name)
 
             # Validate namespace
-            validate_namespace(package_name, new_entity_data.contributes)
+            validate_namespace(namespace, new_entity_data.contributes)
 
             # Resolve package dependencies
-            print(f"Resolving package dependencies...")
             package_dependencies = resolve_package_dependencies(new_entity_data.depends, entity_to_package)
+            
+            # Remove any dependencies that are in devDependencies
+            existing_dev_deps = existing_manifest_data.get("devDependencies", {})
+            for pkg_name in existing_dev_deps:
+                package_dependencies.pop(pkg_name, None)
+            
             if package_dependencies:
+                print(f"Package dependencies:")
                 for pkg_name, pkg_version in package_dependencies.items():
                     print(f"  ✓ {pkg_name} ({pkg_version})")
+                print()
             else:
-                print(f"  (no package dependencies found)")
-            print()
+                print(f"No package dependencies found\n")
 
             new_manifest_data = {
                 "name": existing_manifest_data.get("name", os.path.basename(full_package_dir)),
@@ -449,10 +521,11 @@ def create_or_update_manifest() -> None:
                 "author": existing_manifest_data.get("author", ""),
                 "tags": existing_manifest_data.get("tags", []),
                 "dependencies": package_dependencies,
+                "devDependencies": existing_manifest_data.get("devDependencies", {}),
                 "contributes": vars(new_entity_data.contributes),
                 "depends": vars(new_entity_data.depends),
                 "_generator": "manifest_builder",
-                "_generatorVersion": GENERATOR_VERSION,
+                "_generatorVersion": get_generator_version(),
                 "_lastGenerated": datetime.now(timezone.utc).isoformat()
             }
 

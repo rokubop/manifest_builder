@@ -2,15 +2,17 @@
   "name": "manifest_builder",
   "title": "Manifest Builder",
   "description": "Generates manifest.json files for Talon packages with automatic dependency resolution",
-  "version": "0.3.1",
+  "version": "1.0.0",
+  "namespace": "manifest_builder",
   "github": "https://github.com/rokubop/manifest_builder",
   "preview": "",
   "author": "Rokubop",
   "tags": [],
   "dependencies": {},
+  "devDependencies": {},
   "contributes": {},
   "depends": {},
   "_generator": "manifest_builder",
   "_generatorVersion": "1.0.0",
-  "_lastGenerated": "2025-12-24T04:03:05.694362+00:00"
+  "_lastGenerated": "2025-12-24T05:04:32.121244+00:00"
 }
