@@ -28,16 +28,17 @@ def generate_version_action(package_dir: str) -> None:
         manifest = json.load(f)
 
     namespace = manifest.get('namespace', 'package')
+    # Strip 'user.' prefix if present for function name
+    if namespace.startswith('user.'):
+        namespace = namespace[5:]
     package_name = manifest.get('name', os.path.basename(full_package_dir))
-    
+
     # Check if file already exists
     version_file_path = os.path.join(full_package_dir, f'{namespace}_version.py')
     if os.path.exists(version_file_path):
-        print(f"⚠ Warning: {version_file_path} already exists")
-        response = input("Overwrite? (y/N): ").strip().lower()
-        if response != 'y':
-            print("Cancelled.")
-            sys.exit(0)
+        print(f"File already exists: {version_file_path.replace(chr(92), '/')}")
+        print("Skipping.")
+        sys.exit(0)
 
     # Generate the version action file
     version_file_content = f'''"""Auto-generated version action for {package_name}"""
@@ -60,27 +61,13 @@ class Actions:
         """Returns the package version as (major, minor, patch)"""
         return get_version()
 '''
-    
-    display_path = version_file_path.replace('\\', '/')
-    print(f"\nWill create: {display_path}")
-    print(f"Action: actions.user.{namespace}_version()")
-    print(f"\nThis will NOT modify any existing files (only creates {namespace}_version.py)")
-    
-    try:
-        response = input("\nContinue? (Y/n): ").strip().lower()
-    except KeyboardInterrupt:
-        print("\n\nCancelled.")
-        sys.exit(0)
-    
-    if response == 'n':
-        print("Cancelled.")
-        sys.exit(0)
 
     # Write the version file
     with open(version_file_path, 'w', encoding='utf-8') as f:
         f.write(version_file_content)
 
-    print(f"\n✓ Generated: {version_file_path}")
+    display_path = version_file_path.replace('\\', '/')
+    print(f"\n✓ Generated: {display_path}")
     print(f"  Action: actions.user.{namespace}_version()")
     print(f"\nUsage in other packages:")
     print(f"  version = actions.user.{namespace}_version()")

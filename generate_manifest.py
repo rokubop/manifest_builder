@@ -9,20 +9,24 @@ import sys
 """
 Script that generates a manifest.json file for folder(s).
 
-Run `python manifest_builder.py <directory> [<directory2> ...]`
+Run `python generate_manifest.py <directory> [<directory2> ...]`
 
 Manifest fields:
-- name: The identifier of the package (required)
+- name: Package identifier (defaults to folder name, preserved on updates)
 - title: Human-readable title of the package
-- description: A brief description of what the package does
-- version: Version number of the package (semver format)
-- github: Link to the GitHub repository
-- preview: URL to preview image
-- author: The name of the package author
-- tags: List of tags that categorize the package
-- dependencies: Package dependencies (auto-generated)
-- contributes: Entities this package provides (auto-generated)
-- depends: Entities this package relies on (auto-generated)
+- description: Brief description of what the package does
+- version: Version number (semver format)
+- namespace: Naming prefix for all contributions (e.g. user.my_package)
+- github: GitHub repository URL
+- preview: Preview image URL
+- author: Package author name
+- tags: Category tags for the package
+- dependencies: Required packages with versions (auto-generated)
+- devDependencies: Dev-only dependencies (manually maintained)
+- contributes: Actions/settings/tags/lists/modes/scopes/captures this package provides (auto-generated)
+- depends: Actions/settings/etc. this package uses (auto-generated)
+- _generator: Tool that generated this manifest (auto-added)
+- _generatorVersion: Version of the generator tool (auto-added)
 """
 
 def get_generator_version() -> str:
@@ -382,6 +386,9 @@ def validate_namespace(namespace: str, contributes: Entities) -> None:
     """
     warnings = []
 
+    # Strip 'user.' from namespace for comparison if present
+    namespace_base = namespace[5:] if namespace.startswith('user.') else namespace
+
     for entity_type in ENTITIES:
         entities = getattr(contributes, entity_type)
         for entity in entities:
@@ -392,8 +399,8 @@ def validate_namespace(namespace: str, contributes: Entities) -> None:
                 # Allow exact match or prefix with underscore
                 # Valid: user.mouse_rig or user.mouse_rig_something
                 # Invalid: user.other_thing
-                if entity_suffix != namespace and not entity_suffix.startswith(f"{namespace}_"):
-                    warnings.append(f"  ⚠ {entity_type}: {entity} (expected 'user.{namespace}' or 'user.{namespace}_*')")
+                if entity_suffix != namespace_base and not entity_suffix.startswith(f"{namespace_base}_"):
+                    warnings.append(f"  ⚠ {entity_type}: {entity} (expected '{namespace}' or '{namespace}_*')")
 
     if warnings:
         print(f"\n⚠ Namespace warnings (expected namespace: {namespace}):")
@@ -488,20 +495,39 @@ def create_or_update_manifest() -> None:
             if not namespace:
                 namespace = infer_namespace_from_entities(new_entity_data.contributes)
             if not namespace:
-                # Fall back to package name if can't infer from entities
-                namespace = infer_namespace_from_package_name(package_name)
+                # Check if anything is contributed
+                has_contributions = any([
+                    new_entity_data.contributes.actions,
+                    new_entity_data.contributes.settings,
+                    new_entity_data.contributes.tags,
+                    new_entity_data.contributes.lists,
+                    new_entity_data.contributes.modes,
+                    new_entity_data.contributes.scopes,
+                    new_entity_data.contributes.captures
+                ])
+                if has_contributions:
+                    # Fall back to package name if can't infer from entities
+                    namespace = infer_namespace_from_package_name(package_name)
+                else:
+                    # No contributions, so no namespace needed
+                    namespace = ""
 
-            # Validate namespace
-            validate_namespace(namespace, new_entity_data.contributes)
+            # Prepend 'user.' to namespace for clarity (unless it's empty)
+            if namespace and not namespace.startswith('user.'):
+                namespace = f"user.{namespace}"
+
+            # Validate namespace only if there are contributions
+            if namespace:
+                validate_namespace(namespace, new_entity_data.contributes)
 
             # Resolve package dependencies
             package_dependencies = resolve_package_dependencies(new_entity_data.depends, entity_to_package)
-            
+
             # Remove any dependencies that are in devDependencies
             existing_dev_deps = existing_manifest_data.get("devDependencies", {})
             for pkg_name in existing_dev_deps:
                 package_dependencies.pop(pkg_name, None)
-            
+
             if package_dependencies:
                 print(f"Package dependencies:")
                 for pkg_name, pkg_version in package_dependencies.items():
@@ -525,8 +551,7 @@ def create_or_update_manifest() -> None:
                 "contributes": vars(new_entity_data.contributes),
                 "depends": vars(new_entity_data.depends),
                 "_generator": "manifest_builder",
-                "_generatorVersion": get_generator_version(),
-                "_lastGenerated": datetime.now(timezone.utc).isoformat()
+                "_generatorVersion": get_generator_version()
             }
 
             new_manifest_data = prune_manifest_data(new_manifest_data)
